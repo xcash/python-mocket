@@ -11,14 +11,14 @@ for m in ('multiprocessing', 'billiard'):
         pass
 
 dev_requires = []
+install_requires = open(os.path.join(os.path.dirname(__file__), 'requirements.txt')).read()
 tests_require = open(os.path.join(os.path.dirname(__file__), 'test_requirements.txt')).read()
-install_requires = []
 
 setup(
     name='mocket',
-    version='0.9.1',
-    author='Andrea de Marco',
-    author_email='<24erre@gmail.com>',
+    version='1.2.4',
+    author='Andrea de Marco, Giorgio Salluzzo',
+    author_email='24erre@gmail.com, giorgio.salluzzo@gmail.com',
     url='https://github.com/mocketize/python-mocket',
     description='Socket Mock Framework',
     long_description=open('README.rst').read(),
@@ -36,6 +36,8 @@ setup(
         'Operating System :: OS Independent',
         'Programming Language :: Python :: 2.6',
         'Programming Language :: Python :: 2.7',
+        'Programming Language :: Python :: 3.3',
+        'Programming Language :: Python :: 3.4',
         'Topic :: Software Development',
         'Topic :: Software Development :: Testing',
     ],

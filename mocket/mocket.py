@@ -1,7 +1,11 @@
-from StringIO import StringIO
-from collections import defaultdict
+# coding=utf-8
+from __future__ import unicode_literals
 import functools
 import socket
+from collections import defaultdict
+from io import BytesIO
+from .compat import encode_utf8, basestring, byte_type, text_type
+import collections
 
 __all__ = (
     'true_socket',
@@ -24,10 +28,9 @@ true_create_connection = socket.create_connection
 true_gethostbyname = socket.gethostbyname
 true_gethostname = socket.gethostname
 true_getaddrinfo = socket.getaddrinfo
-gethostbyname = lambda host: host
+gethostbyname = lambda host: '127.0.0.1'
 gethostname = lambda: 'localhost'
-getaddrinfo = lambda host, port, **kwargs: [(2, 1, 6, '', (host, port))]
-CRLF = '\r\n'
+getaddrinfo = lambda host, port, family=None, socktype=None, proto=None, flags=None: [(2, 1, 6, '', (host, port))]
 
 
 def create_connection(address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, sender_address=None):
@@ -40,17 +43,17 @@ def create_connection(address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, sender_ad
 
 class MocketSocket(object):
     def __init__(self, family, type, proto=0):
-        self.setsockopt(family, type, proto)
         self.settimeout(socket._GLOBAL_DEFAULT_TIMEOUT)
         self.true_socket = true_socket(family, type, proto)
-        self.fd = StringIO()
+        self.fd = BytesIO()
         self._closed = True
         self._sock = self
+        self._connected = False
+        self._buflen = 1024
 
-    def setsockopt(self, family, type, protocol):
-        self.family = family
-        self.protocol = protocol
-        self.type = type
+    def setsockopt(self, level, optname, value):
+        if self.true_socket:
+            self.true_socket.setsockopt(level, optname, value)
 
     def settimeout(self, timeout):
         self.timeout = timeout
@@ -78,19 +81,32 @@ class MocketSocket(object):
         self.fd.write(entry.get_response())
         self.fd.seek(0)
 
+    def recv(self, buffersize, flags=None):
+        resp = self.fd.readline(buffersize)
+        return resp
+
+    def _connect(self):
+        if not self._connected:
+            self.true_socket.connect(self._address)
+            self._connected = True
+
     def true_sendall(self, data, *args, **kwargs):
-        self.true_socket.connect(self._address)
+        self._connect()
         self.true_socket.sendall(data, *args, **kwargs)
         recv = True
+        written = 0
         while recv:
-            try:
-                recv = self.true_socket.recv(16)
-                self.true_socket.settimeout(0.0)
-                self.fd.write(recv)
-            except socket.error:
+            recv = self.true_socket.recv(self._buflen)
+            self.fd.write(recv)
+            written += len(recv)
+            if len(recv) < self._buflen:
                 break
-        self.fd.seek(0)
-        self.true_socket.close()
+        self.fd.seek(- written, 1)
+
+    def __getattr__(self, name):
+        # useful when clients call methods on real
+        # socket we do not provide on the fake one
+        return getattr(self.true_socket, name)
 
 
 class Mocket(object):
@@ -152,25 +168,46 @@ class Mocket(object):
 
 
 class MocketEntry(object):
+
+    class Response(byte_type):
+        @property
+        def data(self):
+            return self
+
     request_cls = str
-    response_cls = str
+    response_cls = Response
 
     def __init__(self, location, responses):
         self.location = location
-        self.responses = responses or (self.response_cls(),)
         self.response_index = 0
+
+        if not isinstance(responses, collections.Iterable) or isinstance(responses, basestring):
+            responses = [responses]
+
+        lresponses = []
+        for r in responses:
+            if not getattr(r, 'data', False):
+                if isinstance(r, text_type):
+                    r = encode_utf8(r)
+                r = self.response_cls(r)
+            lresponses.append(r)
+        else:
+            if not responses:
+                lresponses = [self.response_cls(encode_utf8(''))]
+        self.responses = lresponses
 
     def can_handle(self, data):
         return True
 
     def collect(self, data):
-        Mocket.collect(self.request_cls(data))
+        req = self.request_cls(data)
+        Mocket.collect(req)
 
     def get_response(self):
         response = self.responses[self.response_index]
         if self.response_index < len(self.responses) - 1:
             self.response_index += 1
-        return str(response)
+        return response.data
 
 
 class Mocketizer(object):
@@ -185,7 +222,7 @@ class Mocketizer(object):
         self.check_and_call('mocketize_teardown')
         Mocket.disable()
         Mocket.reset()
- 
+
     def check_and_call(self, method):
         method = getattr(self.instance, method, None)
         if callable(method):
